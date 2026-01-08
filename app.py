@@ -24,7 +24,7 @@ except ImportError as e:
     def use(*args, **kwargs):
         raise RuntimeError("memvid_sdk not available - check installation")
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates', static_folder='static')
 
 # Initialize OpenAI client with error handling
 try:
@@ -70,6 +70,20 @@ def get_memory_instance(user_id):
 @app.route('/')
 def index():
     """Render the main chat interface"""
+    import os
+    template_path = os.path.join(app.template_folder, 'index.html')
+    template_exists = os.path.exists(template_path)
+    
+    logger.info(f"Rendering index.html from: {template_path}")
+    logger.info(f"Template exists: {template_exists}")
+    if template_exists:
+        with open(template_path, 'r') as f:
+            content_preview = f.read()[:200]
+            logger.info(f"Template content preview: {content_preview}")
+            has_agentmemory = 'AgentMemory' in content_preview
+            has_view_memories = 'View Memories' in content_preview
+            logger.info(f"Has 'AgentMemory': {has_agentmemory}, Has 'View Memories': {has_view_memories}")
+    
     if not MEMVID_AVAILABLE:
         response = app.make_response(render_template('index.html'))
         response.status_code = 503
@@ -77,10 +91,40 @@ def index():
         response = app.make_response(render_template('index.html'))
     
     # Add cache-busting headers
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    # Add version header
+    response.headers['X-App-Version'] = '2.0.0'
     return response
+
+@app.route('/debug-template', methods=['GET'])
+def debug_template():
+    """Debug endpoint to check template file"""
+    import os
+    template_path = os.path.join(app.template_folder, 'index.html')
+    template_exists = os.path.exists(template_path)
+    
+    info = {
+        'template_folder': app.template_folder,
+        'template_path': template_path,
+        'template_exists': template_exists,
+        'current_dir': os.getcwd(),
+        'app_root': app.root_path
+    }
+    
+    if template_exists:
+        with open(template_path, 'r') as f:
+            content = f.read()
+            info['file_size'] = len(content)
+            info['has_agentmemory'] = 'AgentMemory' in content
+            info['has_view_memories'] = 'View Memories' in content
+            info['has_search_button'] = 'searchMemories' in content
+            info['title_content'] = content[content.find('<title>')+7:content.find('</title>')] if '<title>' in content else 'not found'
+            info['h1_content'] = content[content.find('<h1>')+4:content.find('</h1>')] if '<h1>' in content else 'not found'
+    
+    return jsonify(info)
 
 @app.route('/startup-check', methods=['GET'])
 def startup_check():
