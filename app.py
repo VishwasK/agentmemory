@@ -1,4 +1,5 @@
 import os
+import urllib.parse
 from flask import Flask, render_template, request, jsonify
 from openai import OpenAI
 from mem0 import Memory
@@ -8,8 +9,50 @@ app = Flask(__name__)
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
+# Configure Mem0 to use PostgreSQL with pgvector for persistent storage
+# This is required for Heroku's ephemeral filesystem
+def get_memory_instance():
+    """Initialize Mem0 with PostgreSQL backend for Heroku compatibility"""
+    # Check if DATABASE_URL is set (Heroku Postgres)
+    database_url = os.getenv('DATABASE_URL')
+    
+    if database_url:
+        # Parse DATABASE_URL (format: postgres://user:password@host:port/dbname)
+        # Heroku Postgres uses postgres:// but psycopg2 needs postgresql://
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        
+        # Enable pgvector extension if not already enabled
+        try:
+            import psycopg2
+            conn = psycopg2.connect(database_url)
+            conn.autocommit = True
+            cursor = conn.cursor()
+            cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            app.logger.warning(f"Could not enable pgvector extension: {e}")
+        
+        config = {
+            "vector_store": {
+                "provider": "pgvector",
+                "config": {
+                    "connection_string": database_url,
+                    "collection_name": "mem0_memories",
+                    "embedding_model_dims": 1536  # OpenAI text-embedding-3-small dimensions
+                }
+            }
+        }
+        return Memory.from_config(config)
+    else:
+        # Fallback to default (for local development)
+        # Note: This will use local Qdrant/SQLite which won't persist on Heroku
+        app.logger.warning("DATABASE_URL not set. Using default storage (not persistent on Heroku)")
+        return Memory()
+    
 # Initialize Mem0 memory
-memory = Memory()
+memory = get_memory_instance()
 
 @app.route('/')
 def index():
@@ -85,4 +128,5 @@ def health():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
 

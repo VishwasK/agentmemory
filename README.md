@@ -44,6 +44,21 @@ A quick demo application showcasing Mem0's memory capabilities for AI agents. Th
 
 ## Heroku Deployment
 
+### Important: Heroku's Ephemeral Filesystem
+
+**⚠️ Critical**: Heroku dynos have an **ephemeral filesystem**. Any files written to disk are **automatically deleted** when:
+- The dyno restarts (happens at least once every 24 hours)
+- You deploy new code
+- The dyno crashes or is manually restarted
+
+**Why this matters for Mem0**: By default, Mem0 stores memories in:
+- **Qdrant** (vector store) at `/tmp/qdrant` 
+- **SQLite** (history) at `~/.mem0/history.db`
+
+Both of these use local filesystem storage, which **will be lost** on Heroku dyno restarts!
+
+**Solution**: This app is configured to use **PostgreSQL with pgvector** for persistent storage. You **must** add Heroku Postgres to your app.
+
 ### Prerequisites
 - Heroku account
 - Heroku CLI installed
@@ -61,29 +76,45 @@ A quick demo application showcasing Mem0's memory capabilities for AI agents. Th
    heroku create your-app-name
    ```
 
-3. **Set environment variables**
+3. **Add Heroku Postgres** (Required for persistent storage)
+   ```bash
+   heroku addons:create heroku-postgresql:mini
+   ```
+   This automatically sets the `DATABASE_URL` environment variable.
+
+4. **Enable pgvector extension** (Required for vector storage)
+   ```bash
+   heroku pg:psql -c "CREATE EXTENSION IF NOT EXISTS vector;"
+   ```
+
+5. **Set environment variables**
    ```bash
    heroku config:set OPENAI_API_KEY=your_openai_api_key_here
    heroku config:set OPENAI_MODEL=gpt-4o-mini  # Optional
    ```
 
-4. **Deploy to Heroku**
+6. **Deploy to Heroku**
    ```bash
    git add .
    git commit -m "Initial commit"
    git push heroku main
    ```
 
-5. **Open your app**
+7. **Open your app**
    ```bash
    heroku open
    ```
 
 ### Environment Variables
 
+- `DATABASE_URL` (Set automatically by Heroku Postgres): PostgreSQL connection string
 - `OPENAI_API_KEY` (Required): Your OpenAI API key
 - `OPENAI_MODEL` (Optional): Model to use (default: `gpt-4o-mini`)
 - `PORT` (Set automatically by Heroku): Port for the web server
+
+### Storage Configuration
+
+The app automatically detects `DATABASE_URL` and configures Mem0 to use PostgreSQL with pgvector. If `DATABASE_URL` is not set, it falls back to default storage (which won't persist on Heroku).
 
 ## Usage
 
@@ -131,4 +162,5 @@ Apache 2.0
 
 - [Mem0 Documentation](https://docs.mem0.ai)
 - [Mem0 GitHub](https://github.com/mem0ai/mem0)
+
 
