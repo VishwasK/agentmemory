@@ -42,8 +42,15 @@ except Exception as e:
 # For Heroku, we'll use a configurable storage path (can be mounted volume or S3-backed)
 MEMVID_STORAGE_PATH = os.getenv('MEMVID_STORAGE_PATH', '/tmp/memvid')
 
+# Enable embeddings for vector search (requires OPENAI_API_KEY)
+# Set to 'false' to disable embeddings and use lexical search only
+ENABLE_EMBEDDINGS = os.getenv('ENABLE_EMBEDDINGS', 'true').lower() == 'true'
+
 # Ensure storage directory exists
 os.makedirs(MEMVID_STORAGE_PATH, exist_ok=True)
+
+if ENABLE_EMBEDDINGS and not openai_api_key:
+    logger.warning("ENABLE_EMBEDDINGS is True but OPENAI_API_KEY is not set - embeddings will fail")
 
 def get_memory_instance(user_id):
     """Initialize Memvid memory file for a specific user"""
@@ -249,8 +256,13 @@ def chat():
             
             try:
                 # Get more results (k=5) so we can filter out the query itself
-                # Prefer lexical search first (more reliable), then try hybrid if vector is available
-                if has_lex_index:
+                # Try hybrid search (lexical + vector) if both indexes are available, otherwise fallback
+                if has_lex_index and has_vec_index:
+                    # Hybrid search combines lexical (BM25) and semantic (vector) search
+                    search_results = mv.find(search_query, k=5, mode="auto")
+                    search_mode = "hybrid"
+                    app.logger.info(f"Used hybrid search (lexical + vector) with query '{search_query}', found {len(search_results.get('hits', []))} results")
+                elif has_lex_index:
                     search_results = mv.find(search_query, k=5, mode="lex")
                     search_mode = "lex"
                     app.logger.info(f"Used lexical search with query '{search_query}', found {len(search_results.get('hits', []))} results")
@@ -415,21 +427,21 @@ Be conversational and helpful."""
                 label="user_message",
                 text=message,
                 metadata={"user_id": user_id, "type": "user_message", "timestamp": timestamp},
-                enable_embedding=False  # Disable embedding to avoid errors
+                enable_embedding=ENABLE_EMBEDDINGS  # Enable embeddings if configured
             )
             stored_count += 1
             logger.info(f"Stored user message (frame_id={frame_id}): {message[:50]}...")
         except Exception as e:
             logger.error(f"Failed to store user message: {e}", exc_info=True)
         
-        # Store assistant response - disable embedding
+        # Store assistant response with embeddings if enabled
         try:
             frame_id = mv.put(
                 title=f"Assistant Response - {timestamp}",
                 label="assistant_response",
                 text=assistant_response,
                 metadata={"user_id": user_id, "type": "assistant_response", "timestamp": timestamp},
-                enable_embedding=False  # Disable embedding to avoid errors
+                enable_embedding=ENABLE_EMBEDDINGS  # Enable embeddings if configured
             )
             stored_count += 1
             logger.info(f"Stored assistant response (frame_id={frame_id}): {assistant_response[:50]}...")
@@ -444,7 +456,7 @@ Be conversational and helpful."""
                 label="conversation",
                 text=conversation_text,
                 metadata={"user_id": user_id, "type": "conversation", "timestamp": timestamp},
-                enable_embedding=False
+                enable_embedding=ENABLE_EMBEDDINGS  # Enable embeddings if configured
             )
             stored_count += 1
             logger.info(f"Stored combined conversation (frame_id={frame_id})")
