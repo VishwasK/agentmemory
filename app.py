@@ -401,13 +401,27 @@ def get_memories(user_id):
         timeline_entries = mv.timeline(limit=limit)
         
         # Format memories for response
+        # Note: timeline() returns preview field, not text/title/label directly
         memories = []
         for entry in timeline_entries:
+            preview = entry.get('preview', '')
+            # Extract title from preview if it contains "title: ..."
+            title = entry.get('title', '')
+            if not title and preview:
+                # Preview format: "content\ntitle: X\n..." or "title: X\ncontent..."
+                if 'title:' in preview.lower():
+                    for line in preview.split('\n'):
+                        if 'title:' in line.lower():
+                            title = line.split('title:', 1)[1].strip()
+                            break
+            
             memories.append({
-                'memory': entry.get('text', ''),
-                'title': entry.get('title', ''),
+                'memory': preview or entry.get('text', ''),
+                'title': title,
                 'label': entry.get('label', ''),
+                'preview': preview,
                 'created_at': entry.get('timestamp', ''),
+                'frame_id': entry.get('frame_id', ''),
                 'metadata': entry.get('metadata', {}),
                 'uri': entry.get('uri', '')
             })
@@ -582,9 +596,12 @@ def debug_memory(user_id):
                 {
                     'title': e.get('title', ''),
                     'label': e.get('label', ''),
-                    'text': e.get('text', ''),  # Return full text, not preview
-                    'text_preview': e.get('text', '')[:200] if e.get('text') else '',
+                    'text': e.get('text', ''),
+                    'preview': e.get('preview', ''),  # Memvid returns preview in timeline
+                    'text_preview': e.get('preview', '')[:200] if e.get('preview') else (e.get('text', '')[:200] if e.get('text') else ''),
                     'timestamp': e.get('timestamp', ''),
+                    'frame_id': e.get('frame_id', ''),
+                    'uri': e.get('uri', ''),
                     'metadata': e.get('metadata', {}),
                     'all_keys': list(e.keys()) if isinstance(e, dict) else []
                 }
