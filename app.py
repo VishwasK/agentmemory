@@ -27,15 +27,23 @@ def get_memory_instance(user_id):
     # Create a .mv2 file per user for isolation
     file_path = os.path.join(MEMVID_STORAGE_PATH, f"{user_id}.mv2")
     
+    # Check if file exists
+    if os.path.exists(file_path):
+        try:
+            # Try to open existing file
+            mv = use("basic", file_path, mode="open")
+            return mv
+        except Exception as e:
+            app.logger.warning(f"Could not open existing file {file_path}, creating new: {e}")
+    
+    # Create new file
     try:
-        # Try to open existing file, or create new one
-        mv = use("basic", file_path, mode="auto")
+        mv = create(file_path, enable_vec=True, enable_lex=True)
+        app.logger.info(f"Created new memory file: {file_path}")
         return mv
     except Exception as e:
-        app.logger.warning(f"Could not open existing file, creating new: {e}")
-        # Create new file
-        mv = create(file_path, enable_vec=True, enable_lex=True)
-        return mv
+        app.logger.error(f"Failed to create memory file {file_path}: {e}")
+        raise
 
 @app.route('/')
 def index():
@@ -276,7 +284,32 @@ def debug_memory(user_id):
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
-    return jsonify({'status': 'healthy'}), 200
+    try:
+        # Test if memvid_sdk can be imported and basic operations work
+        test_file = os.path.join(MEMVID_STORAGE_PATH, '.health_check.mv2')
+        if os.path.exists(test_file):
+            os.remove(test_file)
+        
+        mv = create(test_file, enable_vec=True, enable_lex=True)
+        mv.put(title="Health Check", label="test", text="test", enable_embedding=False)
+        mv.seal()
+        stats = mv.stats()
+        os.remove(test_file)
+        
+        return jsonify({
+            'status': 'healthy',
+            'memvid_sdk': 'working',
+            'storage_path': MEMVID_STORAGE_PATH,
+            'storage_writable': os.access(MEMVID_STORAGE_PATH, os.W_OK),
+            'test_stats': stats
+        }), 200
+    except Exception as e:
+        app.logger.error(f"Health check failed: {e}", exc_info=True)
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'storage_path': MEMVID_STORAGE_PATH
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
