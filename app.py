@@ -2,6 +2,7 @@ import os
 import json
 import time
 import logging
+import re
 
 # Configure logging FIRST before any other imports that might log
 logging.basicConfig(level=logging.INFO)
@@ -221,18 +222,43 @@ def chat():
         
         if frame_count > 0:
             # We have memories, try to search
+            # Extract key terms from question queries (e.g., "what is my name" -> "name")
+            # This helps find factual content instead of the question itself
+            search_query = message
+            message_lower = message.lower().strip()
+            
+            # If query looks like a question asking for information, extract key terms
+            question_patterns = [
+                r'what (is|are) (my|the|your) (\w+)',
+                r'who (is|are) (my|the|your) (\w+)',
+                r'where (is|are) (my|the|your) (\w+)',
+                r'when (is|are|was|were) (my|the|your) (\w+)',
+                r'how (is|are|was|were) (my|the|your) (\w+)',
+            ]
+            
+            import re
+            for pattern in question_patterns:
+                match = re.search(pattern, message_lower)
+                if match:
+                    # Extract the key term (the thing being asked about)
+                    key_term = match.group(3) if len(match.groups()) >= 3 else match.group(2)
+                    if key_term and len(key_term) > 2:  # Only use if meaningful
+                        search_query = key_term
+                        app.logger.info(f"Extracted key term from question: '{message}' -> '{search_query}'")
+                        break
+            
             try:
                 # Get more results (k=5) so we can filter out the query itself
                 # Prefer lexical search first (more reliable), then try hybrid if vector is available
                 if has_lex_index:
-                    search_results = mv.find(message, k=5, mode="lex")
+                    search_results = mv.find(search_query, k=5, mode="lex")
                     search_mode = "lex"
-                    app.logger.info(f"Used lexical search, found {len(search_results.get('hits', []))} results")
+                    app.logger.info(f"Used lexical search with query '{search_query}', found {len(search_results.get('hits', []))} results")
                 elif has_vec_index:
                     # Only use vector if lexical isn't available
-                    search_results = mv.find(message, k=5, mode="sem")
+                    search_results = mv.find(search_query, k=5, mode="sem")
                     search_mode = "sem"
-                    app.logger.info(f"Used semantic search, found {len(search_results.get('hits', []))} results")
+                    app.logger.info(f"Used semantic search with query '{search_query}', found {len(search_results.get('hits', []))} results")
                 else:
                     app.logger.warning("No search indexes available")
             except Exception as e:
