@@ -518,6 +518,7 @@ def search_memories(user_id):
         query = request.args.get('q', '')
         k = request.args.get('k', 5, type=int)
         mode = request.args.get('mode', 'auto')  # 'auto', 'lex', or 'sem'
+        apply_filter = request.args.get('filter', 'true').lower() == 'true'  # Option to disable filtering
         
         if not query:
             return jsonify({'error': 'Query parameter "q" is required'}), 400
@@ -556,23 +557,65 @@ def search_memories(user_id):
                 return jsonify({'error': f'Search failed: {error_msg}'}), 500
         
         # Format results
-        results = []
+        raw_results = []
+        filtered_results = []
+        
         if search_results.get("hits"):
+            message_lower = query.lower().strip()
+            message_words = set(message_lower.split())
+            
             for hit in search_results["hits"]:
-                results.append({
-                    'title': hit.get('title', 'Untitled'),
+                snippet = hit.get('snippet', '') or hit.get('text', '') or hit.get('preview', '')
+                score = hit.get('score', 0)
+                title = hit.get('title', 'Untitled')
+                
+                # Clean up snippet
+                if snippet:
+                    lines = snippet.split('\n')
+                    cleaned_lines = []
+                    for line in lines:
+                        if not any(line.lower().startswith(prefix) for prefix in ['title:', 'labels:', 'tags:', 'extractous_metadata:']):
+                            cleaned_lines.append(line)
+                    snippet = '\n'.join(cleaned_lines).strip()
+                
+                raw_result = {
+                    'title': title,
                     'text': hit.get('text', ''),
-                    'snippet': hit.get('snippet', ''),
-                    'score': hit.get('score', 0),
+                    'snippet': snippet,
+                    'score': score,
                     'label': hit.get('label', ''),
                     'metadata': hit.get('metadata', {})
-                })
+                }
+                raw_results.append(raw_result)
+                
+                # Apply filtering if requested
+                if apply_filter and snippet:
+                    snippet_lower = snippet.lower().strip()
+                    snippet_first_line = snippet_lower.split('\n')[0].strip()
+                    
+                    # Skip if matches query exactly
+                    if snippet_first_line == message_lower or snippet_first_line.replace('?', '').replace('!', '').strip() == message_lower:
+                        continue
+                    
+                    # Skip if too similar
+                    if message_lower in snippet_lower and len(snippet_lower) < len(message_lower) * 1.5:
+                        continue
+                    
+                    # Skip if words are subset
+                    snippet_words = set(snippet_lower.split())
+                    if len(snippet_words) <= len(message_words) + 1 and snippet_words.issubset(message_words):
+                        continue
+                
+                filtered_results.append(raw_result)
         
         return jsonify({
             'query': query,
             'mode': mode,
-            'results': results,
-            'count': len(results)
+            'filter_applied': apply_filter,
+            'raw_results': raw_results,
+            'filtered_results': filtered_results,
+            'raw_count': len(raw_results),
+            'filtered_count': len(filtered_results)
         })
     except Exception as e:
         app.logger.error(f"Error searching memories: {str(e)}", exc_info=True)
