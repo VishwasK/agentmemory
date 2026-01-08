@@ -269,12 +269,16 @@ def chat():
             message_lower = message.lower().strip()
             message_words = set(message_lower.split())
             
+            app.logger.info(f"Processing {len(search_results['hits'])} search results for query: '{message}'")
+            
             filtered_hits = []
-            for hit in search_results["hits"]:
+            for i, hit in enumerate(search_results["hits"]):
                 # Get content from snippet, text, or preview
                 snippet = hit.get('snippet', '') or hit.get('text', '') or hit.get('preview', '')
                 score = hit.get('score', 0)
                 title = hit.get('title', 'Untitled')
+                
+                app.logger.info(f"Result {i+1}: snippet={snippet[:100] if snippet else 'EMPTY'}, score={score}")
                 
                 # Clean up snippet - remove metadata tags if present
                 if snippet:
@@ -288,6 +292,7 @@ def chat():
                     snippet = '\n'.join(cleaned_lines).strip()
                 
                 if not snippet:
+                    app.logger.info(f"Result {i+1}: Skipped - empty snippet after cleaning")
                     continue
                 
                 snippet_lower = snippet.lower().strip()
@@ -298,24 +303,26 @@ def chat():
                 
                 # Skip if first line is exactly the query (allowing minor punctuation differences)
                 if snippet_first_line == message_lower or snippet_first_line.replace('?', '').replace('!', '').strip() == message_lower:
-                    app.logger.info(f"Skipping result that matches query exactly: {snippet[:50]}...")
+                    app.logger.info(f"Result {i+1}: FILTERED - first line matches query exactly: '{snippet_first_line}'")
                     continue
                 
                 # Skip if snippet contains the full query as a substring and is roughly the same length
                 if message_lower in snippet_lower and len(snippet_lower) < len(message_lower) * 1.5:
-                    app.logger.info(f"Skipping result too similar to query: {snippet[:50]}...")
+                    app.logger.info(f"Result {i+1}: FILTERED - too similar to query (substring match): '{snippet[:50]}...'")
                     continue
                 
                 # Skip if snippet words are a subset of query words (query is more specific)
                 snippet_words = set(snippet_lower.split())
                 if len(snippet_words) <= len(message_words) + 1 and snippet_words.issubset(message_words):
-                    app.logger.info(f"Skipping result that matches query exactly: {snippet[:50]}...")
+                    app.logger.info(f"Result {i+1}: FILTERED - words are subset of query: {snippet_words} subset of {message_words}")
                     continue
                 
                 # Prefer results that look like factual statements (contain "is", "was", "are", etc.)
                 # or contain proper nouns (capitalized words)
                 is_factual = any(word in snippet_lower for word in [' is ', ' was ', ' are ', ' were ', ' has ', ' have '])
                 has_proper_noun = any(word[0].isupper() for word in snippet.split() if len(word) > 1)
+                
+                app.logger.info(f"Result {i+1}: KEPT - snippet='{snippet[:50]}...', is_factual={is_factual}, has_proper_noun={has_proper_noun}, score={score}")
                 
                 filtered_hits.append({
                     'snippet': snippet,
@@ -325,11 +332,15 @@ def chat():
                     'has_proper_noun': has_proper_noun
                 })
             
+            app.logger.info(f"After filtering: {len(filtered_hits)} results kept out of {len(search_results['hits'])} total")
+            
             # Sort by: factual content first, then score
             filtered_hits.sort(key=lambda x: (not x['is_factual'], -x['score']))
             
             # Take top 3 after filtering
             memories_used = min(len(filtered_hits), 3)
+            app.logger.info(f"Using top {memories_used} results after sorting")
+            
             for hit in filtered_hits[:memories_used]:
                 memories_str += f"- {hit['snippet']}\n"
                 search_details.append({
