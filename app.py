@@ -222,14 +222,15 @@ def chat():
         if frame_count > 0:
             # We have memories, try to search
             try:
+                # Get more results (k=5) so we can filter out the query itself
                 # Prefer lexical search first (more reliable), then try hybrid if vector is available
                 if has_lex_index:
-                    search_results = mv.find(message, k=3, mode="lex")
+                    search_results = mv.find(message, k=5, mode="lex")
                     search_mode = "lex"
                     app.logger.info(f"Used lexical search, found {len(search_results.get('hits', []))} results")
                 elif has_vec_index:
                     # Only use vector if lexical isn't available
-                    search_results = mv.find(message, k=3, mode="sem")
+                    search_results = mv.find(message, k=5, mode="sem")
                     search_mode = "sem"
                     app.logger.info(f"Used semantic search, found {len(search_results.get('hits', []))} results")
                 else:
@@ -262,7 +263,13 @@ def chat():
         search_details = []
         
         if search_results.get("hits"):
-            memories_used = len(search_results["hits"])
+            # Filter and process results
+            # 1. Filter out results that are too similar to the query (to avoid returning the question itself)
+            # 2. Prioritize factual content over questions
+            message_lower = message.lower().strip()
+            message_words = set(message_lower.split())
+            
+            filtered_hits = []
             for hit in search_results["hits"]:
                 # Get content from snippet, text, or preview
                 snippet = hit.get('snippet', '') or hit.get('text', '') or hit.get('preview', '')
@@ -280,13 +287,48 @@ def chat():
                             cleaned_lines.append(line)
                     snippet = '\n'.join(cleaned_lines).strip()
                 
-                if snippet:
-                    memories_str += f"- {snippet}\n"
-                    search_details.append({
-                        'title': title,
-                        'snippet': snippet[:200],
-                        'score': score
-                    })
+                if not snippet:
+                    continue
+                
+                snippet_lower = snippet.lower()
+                
+                # Skip if snippet is too similar to the query (likely the question itself)
+                # Check if snippet contains the full query as a substring
+                if message_lower in snippet_lower and len(snippet_lower) < len(message_lower) * 1.5:
+                    app.logger.info(f"Skipping result too similar to query: {snippet[:50]}...")
+                    continue
+                
+                # Skip if snippet is exactly the query (with minor variations)
+                snippet_words = set(snippet_lower.split())
+                if len(snippet_words) <= len(message_words) + 2 and snippet_words.issubset(message_words):
+                    app.logger.info(f"Skipping result that matches query exactly: {snippet[:50]}...")
+                    continue
+                
+                # Prefer results that look like factual statements (contain "is", "was", "are", etc.)
+                # or contain proper nouns (capitalized words)
+                is_factual = any(word in snippet_lower for word in [' is ', ' was ', ' are ', ' were ', ' has ', ' have '])
+                has_proper_noun = any(word[0].isupper() for word in snippet.split() if len(word) > 1)
+                
+                filtered_hits.append({
+                    'snippet': snippet,
+                    'score': score,
+                    'title': title,
+                    'is_factual': is_factual,
+                    'has_proper_noun': has_proper_noun
+                })
+            
+            # Sort by: factual content first, then score
+            filtered_hits.sort(key=lambda x: (not x['is_factual'], -x['score']))
+            
+            # Take top 3 after filtering
+            memories_used = min(len(filtered_hits), 3)
+            for hit in filtered_hits[:memories_used]:
+                memories_str += f"- {hit['snippet']}\n"
+                search_details.append({
+                    'title': hit['title'],
+                    'snippet': hit['snippet'][:200],
+                    'score': hit['score']
+                })
         
         app.logger.info(f"Found {memories_used} memories for query: {message}")
         if memories_used > 0:
