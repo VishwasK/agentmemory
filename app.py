@@ -2,18 +2,40 @@ import os
 import json
 import time
 import logging
-from flask import Flask, render_template, request, jsonify
-from openai import OpenAI
-from memvid_sdk import create, use
 
-# Configure logging
+# Configure logging FIRST before any other imports that might log
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+from flask import Flask, render_template, request, jsonify
+from openai import OpenAI
+
+# Import memvid_sdk with error handling
+try:
+    from memvid_sdk import create, use
+    MEMVID_AVAILABLE = True
+    logger.info("memvid_sdk imported successfully")
+except ImportError as e:
+    logger.error(f"Failed to import memvid_sdk: {e}")
+    MEMVID_AVAILABLE = False
+    # Create dummy functions to prevent crashes
+    def create(*args, **kwargs):
+        raise RuntimeError("memvid_sdk not available - check installation")
+    def use(*args, **kwargs):
+        raise RuntimeError("memvid_sdk not available - check installation")
+
 app = Flask(__name__)
 
-# Initialize OpenAI client
-openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+# Initialize OpenAI client with error handling
+try:
+    openai_api_key = os.getenv('OPENAI_API_KEY')
+    if not openai_api_key:
+        logger.warning("OPENAI_API_KEY not set - embeddings and LLM will fail")
+    openai_client = OpenAI(api_key=openai_api_key)
+    logger.info("OpenAI client initialized")
+except Exception as e:
+    logger.error(f"Failed to initialize OpenAI client: {e}")
+    openai_client = None
 
 # Memvid uses single-file .mv2 format - store files in a persistent location
 # For Heroku, we'll use a configurable storage path (can be mounted volume or S3-backed)
@@ -48,7 +70,37 @@ def get_memory_instance(user_id):
 @app.route('/')
 def index():
     """Render the main chat interface"""
+    if not MEMVID_AVAILABLE:
+        return render_template('index.html'), 503
     return render_template('index.html')
+
+@app.route('/startup-check', methods=['GET'])
+def startup_check():
+    """Check if all dependencies are available"""
+    checks = {
+        'memvid_sdk': MEMVID_AVAILABLE,
+        'openai': openai_client is not None,
+        'storage_path': MEMVID_STORAGE_PATH,
+        'storage_writable': os.access(MEMVID_STORAGE_PATH, os.W_OK) if os.path.exists(MEMVID_STORAGE_PATH) else False
+    }
+    
+    if MEMVID_AVAILABLE:
+        try:
+            # Try a simple operation
+            test_file = os.path.join(MEMVID_STORAGE_PATH, '.startup_test.mv2')
+            if os.path.exists(test_file):
+                os.remove(test_file)
+            mv = create(test_file, enable_vec=False, enable_lex=False)
+            mv.put(title="Test", label="test", text="test", enable_embedding=False)
+            mv.seal()
+            os.remove(test_file)
+            checks['memvid_test'] = True
+        except Exception as e:
+            checks['memvid_test'] = False
+            checks['memvid_error'] = str(e)
+    
+    status = 200 if all([checks['memvid_sdk'], checks['openai']]) else 503
+    return jsonify(checks), status
 
 @app.route('/chat', methods=['POST'])
 def chat():
