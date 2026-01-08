@@ -44,13 +44,19 @@ MEMVID_STORAGE_PATH = os.getenv('MEMVID_STORAGE_PATH', '/tmp/memvid')
 
 # Enable embeddings for vector search (requires OPENAI_API_KEY)
 # Set to 'false' to disable embeddings and use lexical search only
-ENABLE_EMBEDDINGS = os.getenv('ENABLE_EMBEDDINGS', 'true').lower() == 'true'
+ENABLE_EMBEDDINGS_ENV = os.getenv('ENABLE_EMBEDDINGS', 'true').lower() == 'true'
+# Only enable embeddings if API key is available
+ENABLE_EMBEDDINGS = ENABLE_EMBEDDINGS_ENV and bool(openai_api_key)
 
 # Ensure storage directory exists
 os.makedirs(MEMVID_STORAGE_PATH, exist_ok=True)
 
-if ENABLE_EMBEDDINGS and not openai_api_key:
-    logger.warning("ENABLE_EMBEDDINGS is True but OPENAI_API_KEY is not set - embeddings will fail")
+if ENABLE_EMBEDDINGS_ENV and not openai_api_key:
+    logger.warning("ENABLE_EMBEDDINGS is True but OPENAI_API_KEY is not set - embeddings disabled")
+elif ENABLE_EMBEDDINGS:
+    logger.info("Embeddings enabled - vector search will be available")
+else:
+    logger.info("Embeddings disabled - using lexical search only")
 
 def get_memory_instance(user_id):
     """Initialize Memvid memory file for a specific user"""
@@ -419,36 +425,61 @@ Be conversational and helpful."""
         timestamp = int(time.time())
         stored_count = 0
         
-        # Store user message - disable embedding for now to avoid errors
-        # We'll use lexical search which works without embeddings
+        # Store user message with embeddings if enabled, fallback to no embeddings on failure
         try:
             frame_id = mv.put(
                 title=f"User Message - {timestamp}",
                 label="user_message",
                 text=message,
                 metadata={"user_id": user_id, "type": "user_message", "timestamp": timestamp},
-                enable_embedding=ENABLE_EMBEDDINGS  # Enable embeddings if configured
+                enable_embedding=ENABLE_EMBEDDINGS
             )
             stored_count += 1
-            logger.info(f"Stored user message (frame_id={frame_id}): {message[:50]}...")
+            logger.info(f"Stored user message (frame_id={frame_id}, embedding={ENABLE_EMBEDDINGS}): {message[:50]}...")
         except Exception as e:
-            logger.error(f"Failed to store user message: {e}", exc_info=True)
+            logger.warning(f"Failed to store user message with embedding={ENABLE_EMBEDDINGS}, retrying without: {e}")
+            # Fallback: try without embeddings
+            try:
+                frame_id = mv.put(
+                    title=f"User Message - {timestamp}",
+                    label="user_message",
+                    text=message,
+                    metadata={"user_id": user_id, "type": "user_message", "timestamp": timestamp},
+                    enable_embedding=False
+                )
+                stored_count += 1
+                logger.info(f"Stored user message (frame_id={frame_id}, no embedding): {message[:50]}...")
+            except Exception as e2:
+                logger.error(f"Failed to store user message even without embedding: {e2}", exc_info=True)
         
-        # Store assistant response with embeddings if enabled
+        # Store assistant response with embeddings if enabled, fallback to no embeddings on failure
         try:
             frame_id = mv.put(
                 title=f"Assistant Response - {timestamp}",
                 label="assistant_response",
                 text=assistant_response,
                 metadata={"user_id": user_id, "type": "assistant_response", "timestamp": timestamp},
-                enable_embedding=ENABLE_EMBEDDINGS  # Enable embeddings if configured
+                enable_embedding=ENABLE_EMBEDDINGS
             )
             stored_count += 1
-            logger.info(f"Stored assistant response (frame_id={frame_id}): {assistant_response[:50]}...")
+            logger.info(f"Stored assistant response (frame_id={frame_id}, embedding={ENABLE_EMBEDDINGS}): {assistant_response[:50]}...")
         except Exception as e:
-            logger.error(f"Failed to store assistant response: {e}", exc_info=True)
+            logger.warning(f"Failed to store assistant response with embedding={ENABLE_EMBEDDINGS}, retrying without: {e}")
+            # Fallback: try without embeddings
+            try:
+                frame_id = mv.put(
+                    title=f"Assistant Response - {timestamp}",
+                    label="assistant_response",
+                    text=assistant_response,
+                    metadata={"user_id": user_id, "type": "assistant_response", "timestamp": timestamp},
+                    enable_embedding=False
+                )
+                stored_count += 1
+                logger.info(f"Stored assistant response (frame_id={frame_id}, no embedding): {assistant_response[:50]}...")
+            except Exception as e2:
+                logger.error(f"Failed to store assistant response even without embedding: {e2}", exc_info=True)
         
-        # Also store combined conversation (without embedding)
+        # Also store combined conversation with embeddings if enabled, fallback to no embeddings on failure
         conversation_text = f"User: {message}\nAssistant: {assistant_response}"
         try:
             frame_id = mv.put(
@@ -456,12 +487,25 @@ Be conversational and helpful."""
                 label="conversation",
                 text=conversation_text,
                 metadata={"user_id": user_id, "type": "conversation", "timestamp": timestamp},
-                enable_embedding=ENABLE_EMBEDDINGS  # Enable embeddings if configured
+                enable_embedding=ENABLE_EMBEDDINGS
             )
             stored_count += 1
-            logger.info(f"Stored combined conversation (frame_id={frame_id})")
+            logger.info(f"Stored conversation (frame_id={frame_id}, embedding={ENABLE_EMBEDDINGS}): {conversation_text[:50]}...")
         except Exception as e:
-            logger.error(f"Failed to store combined conversation: {e}", exc_info=True)
+            logger.warning(f"Failed to store conversation with embedding={ENABLE_EMBEDDINGS}, retrying without: {e}")
+            # Fallback: try without embeddings
+            try:
+                frame_id = mv.put(
+                    title=f"Conversation - {timestamp}",
+                    label="conversation",
+                    text=conversation_text,
+                    metadata={"user_id": user_id, "type": "conversation", "timestamp": timestamp},
+                    enable_embedding=False
+                )
+                stored_count += 1
+                logger.info(f"Stored conversation (frame_id={frame_id}, no embedding): {conversation_text[:50]}...")
+            except Exception as e2:
+                logger.error(f"Failed to store conversation even without embedding: {e2}", exc_info=True)
         
         # Commit changes - this is critical for persistence
         try:
