@@ -71,18 +71,27 @@ def get_memory_instance(user_id):
 def index():
     """Render the main chat interface"""
     import os
-    template_path = os.path.join(app.template_folder, 'index.html')
+    
+    # Read template file directly to verify content
+    template_path = os.path.join(app.root_path, app.template_folder, 'index.html')
     template_exists = os.path.exists(template_path)
     
-    logger.info(f"Rendering index.html from: {template_path}")
-    logger.info(f"Template exists: {template_exists}")
+    # Log what we're actually serving
     if template_exists:
-        with open(template_path, 'r') as f:
-            content_preview = f.read()[:200]
-            logger.info(f"Template content preview: {content_preview}")
-            has_agentmemory = 'AgentMemory' in content_preview
-            has_view_memories = 'View Memories' in content_preview
-            logger.info(f"Has 'AgentMemory': {has_agentmemory}, Has 'View Memories': {has_view_memories}")
+        with open(template_path, 'r', encoding='utf-8') as f:
+            template_content = f.read()
+            has_agentmemory = 'AgentMemory' in template_content
+            has_view_memories = 'View Memories' in template_content
+            has_mem0 = 'Mem0' in template_content
+            logger.info(f"Template file: {template_path}")
+            logger.info(f"File size: {len(template_content)} bytes")
+            logger.info(f"Contains 'AgentMemory': {has_agentmemory}")
+            logger.info(f"Contains 'View Memories': {has_view_memories}")
+            logger.info(f"Contains 'Mem0': {has_mem0}")
+            
+            if has_mem0 and not has_agentmemory:
+                logger.error("ERROR: Template still contains old Mem0 content!")
+                return f"ERROR: Template file contains old content. Path: {template_path}", 500
     
     if not MEMVID_AVAILABLE:
         response = app.make_response(render_template('index.html'))
@@ -103,7 +112,7 @@ def index():
 def debug_template():
     """Debug endpoint to check template file"""
     import os
-    template_path = os.path.join(app.template_folder, 'index.html')
+    template_path = os.path.join(app.root_path, app.template_folder, 'index.html')
     template_exists = os.path.exists(template_path)
     
     info = {
@@ -111,20 +120,47 @@ def debug_template():
         'template_path': template_path,
         'template_exists': template_exists,
         'current_dir': os.getcwd(),
-        'app_root': app.root_path
+        'app_root': app.root_path,
+        'root_path': app.root_path
     }
     
     if template_exists:
-        with open(template_path, 'r') as f:
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
             info['file_size'] = len(content)
             info['has_agentmemory'] = 'AgentMemory' in content
             info['has_view_memories'] = 'View Memories' in content
             info['has_search_button'] = 'searchMemories' in content
+            info['has_mem0'] = 'Mem0 Demo' in content or 'Mem0' in content
             info['title_content'] = content[content.find('<title>')+7:content.find('</title>')] if '<title>' in content else 'not found'
             info['h1_content'] = content[content.find('<h1>')+4:content.find('</h1>')] if '<h1>' in content else 'not found'
+            # Show first 500 chars
+            info['content_preview'] = content[:500]
+    else:
+        # Try alternative paths
+        alt_paths = [
+            os.path.join('templates', 'index.html'),
+            os.path.join(app.root_path, 'templates', 'index.html'),
+            'templates/index.html'
+        ]
+        info['alternative_paths_checked'] = []
+        for alt_path in alt_paths:
+            exists = os.path.exists(alt_path)
+            info['alternative_paths_checked'].append({'path': alt_path, 'exists': exists})
     
     return jsonify(info)
+
+@app.route('/raw-template', methods=['GET'])
+def raw_template():
+    """Return raw template content for debugging"""
+    import os
+    template_path = os.path.join(app.root_path, app.template_folder, 'index.html')
+    if os.path.exists(template_path):
+        with open(template_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return content, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    else:
+        return f"Template not found at: {template_path}", 404
 
 @app.route('/startup-check', methods=['GET'])
 def startup_check():
