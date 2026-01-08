@@ -341,6 +341,23 @@ def debug_memory(user_id):
         app.logger.error(f"Error in debug endpoint: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+@app.route('/version', methods=['GET'])
+def version():
+    """Get deployment version info"""
+    import subprocess
+    try:
+        git_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('utf-8').strip()
+    except:
+        git_hash = "unknown"
+    
+    return jsonify({
+        'version': '2.0.0',
+        'git_hash': git_hash,
+        'memvid_available': MEMVID_AVAILABLE,
+        'ui_title': 'AgentMemory',
+        'has_debug_buttons': True
+    })
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
