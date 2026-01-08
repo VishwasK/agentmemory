@@ -305,83 +305,68 @@ Be conversational and helpful."""
         timestamp = int(time.time())
         stored_count = 0
         
-        # Store user message - try with embedding first, fallback without if it fails
+        # Store user message - disable embedding for now to avoid errors
+        # We'll use lexical search which works without embeddings
         try:
-            mv.put(
+            frame_id = mv.put(
                 title=f"User Message - {timestamp}",
                 label="user_message",
                 text=message,
                 metadata={"user_id": user_id, "type": "user_message", "timestamp": timestamp},
-                enable_embedding=True,
-                embedding_model="openai-small"  # Uses OPENAI_API_KEY
+                enable_embedding=False  # Disable embedding to avoid errors
             )
             stored_count += 1
-            logger.info(f"Stored user message: {message[:50]}...")
+            logger.info(f"Stored user message (frame_id={frame_id}): {message[:50]}...")
         except Exception as e:
-            logger.error(f"Failed to store user message with embedding: {e}")
-            # Try without embedding
-            try:
-                mv.put(
-                    title=f"User Message - {timestamp}",
-                    label="user_message",
-                    text=message,
-                    metadata={"user_id": user_id, "type": "user_message", "timestamp": timestamp},
-                    enable_embedding=False
-                )
-                stored_count += 1
-                logger.info("Stored user message without embedding")
-            except Exception as e2:
-                logger.error(f"Failed to store user message: {e2}")
+            logger.error(f"Failed to store user message: {e}", exc_info=True)
         
-        # Store assistant response
+        # Store assistant response - disable embedding
         try:
-            mv.put(
+            frame_id = mv.put(
                 title=f"Assistant Response - {timestamp}",
                 label="assistant_response",
                 text=assistant_response,
                 metadata={"user_id": user_id, "type": "assistant_response", "timestamp": timestamp},
-                enable_embedding=True,
-                embedding_model="openai-small"
+                enable_embedding=False  # Disable embedding to avoid errors
             )
             stored_count += 1
-            logger.info(f"Stored assistant response: {assistant_response[:50]}...")
+            logger.info(f"Stored assistant response (frame_id={frame_id}): {assistant_response[:50]}...")
         except Exception as e:
-            logger.error(f"Failed to store assistant response with embedding: {e}")
-            # Try without embedding
-            try:
-                mv.put(
-                    title=f"Assistant Response - {timestamp}",
-                    label="assistant_response",
-                    text=assistant_response,
-                    metadata={"user_id": user_id, "type": "assistant_response", "timestamp": timestamp},
-                    enable_embedding=False
-                )
-                stored_count += 1
-                logger.info("Stored assistant response without embedding")
-            except Exception as e2:
-                logger.error(f"Failed to store assistant response: {e2}")
+            logger.error(f"Failed to store assistant response: {e}", exc_info=True)
         
-        # Also store combined conversation (without embedding to avoid issues)
+        # Also store combined conversation (without embedding)
         conversation_text = f"User: {message}\nAssistant: {assistant_response}"
         try:
-            mv.put(
+            frame_id = mv.put(
                 title=f"Conversation - {timestamp}",
                 label="conversation",
                 text=conversation_text,
                 metadata={"user_id": user_id, "type": "conversation", "timestamp": timestamp},
-                enable_embedding=False  # Don't enable embedding for combined to avoid errors
+                enable_embedding=False
             )
             stored_count += 1
-            logger.info("Stored combined conversation")
+            logger.info(f"Stored combined conversation (frame_id={frame_id})")
         except Exception as e:
-            logger.error(f"Failed to store combined conversation: {e}")
+            logger.error(f"Failed to store combined conversation: {e}", exc_info=True)
         
         # Commit changes - this is critical for persistence
         try:
             mv.seal()
             logger.info(f"Successfully committed {stored_count} memory entries")
+            
+            # Verify storage by checking stats after commit
+            stats_after = mv.stats()
+            logger.info(f"After commit - frame_count: {stats_after.get('frame_count', 0)}")
+            
+            # Try a quick search to verify data is searchable
+            if stored_count > 0:
+                try:
+                    test_search = mv.find(message[:10] if len(message) > 10 else message, k=1, mode="lex")
+                    logger.info(f"Verification search found {len(test_search.get('hits', []))} results")
+                except Exception as e:
+                    logger.warning(f"Verification search failed: {e}")
         except Exception as e:
-            logger.error(f"Failed to seal memory file: {e}")
+            logger.error(f"Failed to seal memory file: {e}", exc_info=True)
             # Try to continue anyway
         
         stats_after = mv.stats()
@@ -562,6 +547,30 @@ def debug_memory(user_id):
         stats = mv.stats()
         timeline = mv.timeline(limit=20)
         
+        # Try searching to see if content is actually searchable
+        search_test_results = []
+        if stats.get('frame_count', 0) > 0:
+            try:
+                # Try searching for common words
+                test_queries = ["user", "message", "name", "vishwas"]
+                for query in test_queries:
+                    try:
+                        results = mv.find(query, k=3, mode="lex")
+                        if results.get('hits'):
+                            search_test_results.append({
+                                'query': query,
+                                'found': len(results.get('hits', [])),
+                                'first_hit': {
+                                    'title': results['hits'][0].get('title', ''),
+                                    'text': results['hits'][0].get('text', '')[:100] if results['hits'][0].get('text') else '',
+                                    'snippet': results['hits'][0].get('snippet', '')[:100] if results['hits'][0].get('snippet') else ''
+                                }
+                            })
+                    except:
+                        pass
+            except Exception as e:
+                logger.warning(f"Search test failed: {e}")
+        
         return jsonify({
             'user_id': user_id,
             'file_path': file_path,
@@ -573,12 +582,15 @@ def debug_memory(user_id):
                 {
                     'title': e.get('title', ''),
                     'label': e.get('label', ''),
-                    'text_preview': e.get('text', '')[:200],
+                    'text': e.get('text', ''),  # Return full text, not preview
+                    'text_preview': e.get('text', '')[:200] if e.get('text') else '',
                     'timestamp': e.get('timestamp', ''),
-                    'metadata': e.get('metadata', {})
+                    'metadata': e.get('metadata', {}),
+                    'all_keys': list(e.keys()) if isinstance(e, dict) else []
                 }
                 for e in timeline
             ],
+            'search_test': search_test_results,
             'storage_path': MEMVID_STORAGE_PATH,
             'all_files': [f for f in os.listdir(MEMVID_STORAGE_PATH) if f.endswith('.mv2')] if os.path.exists(MEMVID_STORAGE_PATH) else []
         })
