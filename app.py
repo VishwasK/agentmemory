@@ -264,15 +264,29 @@ def chat():
         if search_results.get("hits"):
             memories_used = len(search_results["hits"])
             for hit in search_results["hits"]:
-                snippet = hit.get('snippet', hit.get('text', ''))
+                # Get content from snippet, text, or preview
+                snippet = hit.get('snippet', '') or hit.get('text', '') or hit.get('preview', '')
                 score = hit.get('score', 0)
                 title = hit.get('title', 'Untitled')
-                memories_str += f"- {snippet}\n"
-                search_details.append({
-                    'title': title,
-                    'snippet': snippet[:200],
-                    'score': score
-                })
+                
+                # Clean up snippet - remove metadata tags if present
+                if snippet:
+                    # Remove common metadata patterns
+                    lines = snippet.split('\n')
+                    cleaned_lines = []
+                    for line in lines:
+                        # Skip metadata lines
+                        if not any(line.lower().startswith(prefix) for prefix in ['title:', 'labels:', 'tags:', 'extractous_metadata:']):
+                            cleaned_lines.append(line)
+                    snippet = '\n'.join(cleaned_lines).strip()
+                
+                if snippet:
+                    memories_str += f"- {snippet}\n"
+                    search_details.append({
+                        'title': title,
+                        'snippet': snippet[:200],
+                        'score': score
+                    })
         
         app.logger.info(f"Found {memories_used} memories for query: {message}")
         if memories_used > 0:
