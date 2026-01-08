@@ -71,8 +71,16 @@ def get_memory_instance(user_id):
 def index():
     """Render the main chat interface"""
     if not MEMVID_AVAILABLE:
-        return render_template('index.html'), 503
-    return render_template('index.html')
+        response = app.make_response(render_template('index.html'))
+        response.status_code = 503
+    else:
+        response = app.make_response(render_template('index.html'))
+    
+    # Add cache-busting headers
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/startup-check', methods=['GET'])
 def startup_check():
