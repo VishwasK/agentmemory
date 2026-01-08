@@ -209,29 +209,51 @@ def chat():
         # Get stats before search
         stats_before = mv.stats()
         app.logger.info(f"Memory stats before search: {stats_before}")
-        app.logger.info(f"Has vector index: {stats_before.get('has_vec_index', False)}")
-        app.logger.info(f"Has lexical index: {stats_before.get('has_lex_index', False)}")
+        frame_count = stats_before.get('frame_count', 0)
+        has_vec_index = stats_before.get('has_vec_index', False)
+        has_lex_index = stats_before.get('has_lex_index', False)
         
-        # Search for relevant memories - try auto first, fallback to lex if vector fails
-        search_results = None
-        search_mode = "auto"
-        try:
-            # Try hybrid search (BM25 + vector) if vector index exists
-            if stats_before.get('has_vec_index', False):
-                search_results = mv.find(message, k=3, mode="auto")
-            else:
-                # Fallback to lexical search only
-                app.logger.warning("Vector index not available, using lexical search only")
-                search_results = mv.find(message, k=3, mode="lex")
-                search_mode = "lex"
-        except Exception as e:
-            app.logger.error(f"Search failed with auto mode: {e}, trying lexical only")
+        app.logger.info(f"Frame count: {frame_count}, Has vector index: {has_vec_index}, Has lexical index: {has_lex_index}")
+        
+        # Only search if we have stored memories
+        search_results = {"hits": []}
+        search_mode = "none"
+        
+        if frame_count > 0:
+            # We have memories, try to search
             try:
-                search_results = mv.find(message, k=3, mode="lex")
-                search_mode = "lex"
-            except Exception as e2:
-                app.logger.error(f"Lexical search also failed: {e2}")
-                search_results = {"hits": []}
+                # Prefer lexical search first (more reliable), then try hybrid if vector is available
+                if has_lex_index:
+                    search_results = mv.find(message, k=3, mode="lex")
+                    search_mode = "lex"
+                    app.logger.info(f"Used lexical search, found {len(search_results.get('hits', []))} results")
+                elif has_vec_index:
+                    # Only use vector if lexical isn't available
+                    search_results = mv.find(message, k=3, mode="sem")
+                    search_mode = "sem"
+                    app.logger.info(f"Used semantic search, found {len(search_results.get('hits', []))} results")
+                else:
+                    app.logger.warning("No search indexes available")
+            except Exception as e:
+                error_msg = str(e)
+                app.logger.error(f"Search failed: {error_msg}")
+                # If it's a vector index error and we have lexical, try that
+                if "MV011" in error_msg or "vector" in error_msg.lower():
+                    if has_lex_index:
+                        try:
+                            app.logger.info("Retrying with lexical search after vector error")
+                            search_results = mv.find(message, k=3, mode="lex")
+                            search_mode = "lex"
+                        except Exception as e2:
+                            app.logger.error(f"Lexical search also failed: {e2}")
+                            search_results = {"hits": []}
+                    else:
+                        app.logger.warning("Vector search failed and no lexical index available")
+                        search_results = {"hits": []}
+                else:
+                    search_results = {"hits": []}
+        else:
+            app.logger.info("No memories stored yet, skipping search")
         
         app.logger.info(f"Search results (mode={search_mode}): {search_results}")
         
