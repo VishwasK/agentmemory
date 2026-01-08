@@ -226,6 +226,7 @@ def chat():
             # This helps find factual content instead of the question itself
             search_query = message
             message_lower = message.lower().strip()
+            original_message = message  # Keep original for filtering
             
             # If query looks like a question asking for information, extract key terms
             question_patterns = [
@@ -236,7 +237,6 @@ def chat():
                 r'how (is|are|was|were) (my|the|your) (\w+)',
             ]
             
-            import re
             for pattern in question_patterns:
                 match = re.search(pattern, message_lower)
                 if match:
@@ -244,7 +244,7 @@ def chat():
                     key_term = match.group(3) if len(match.groups()) >= 3 else match.group(2)
                     if key_term and len(key_term) > 2:  # Only use if meaningful
                         search_query = key_term
-                        app.logger.info(f"Extracted key term from question: '{message}' -> '{search_query}'")
+                        app.logger.info(f"Extracted key term from question: '{message}' -> '{search_query}' (but filtering against original)")
                         break
             
             try:
@@ -292,7 +292,8 @@ def chat():
             # Filter and process results
             # 1. Filter out results that are too similar to the query (to avoid returning the question itself)
             # 2. Prioritize factual content over questions
-            message_lower = message.lower().strip()
+            # Use original message for filtering, not the search query (which might be extracted key term)
+            message_lower = original_message.lower().strip()
             message_words = set(message_lower.split())
             
             app.logger.info(f"Processing {len(search_results['hits'])} search results for query: '{message}'")
