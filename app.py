@@ -52,19 +52,21 @@ def get_memory_instance(user_id):
     # Check if file exists
     if os.path.exists(file_path):
         try:
-            # Try to open existing file
-            mv = use("basic", file_path, mode="open")
+            # Open existing file - use "auto" mode which handles both read and write
+            # The file already has vector index enabled from creation
+            mv = use("basic", file_path, mode="auto")
+            logger.info(f"Opened existing memory file: {file_path}")
             return mv
         except Exception as e:
-            app.logger.warning(f"Could not open existing file {file_path}, creating new: {e}")
+            logger.warning(f"Could not open existing file {file_path}, creating new: {e}")
     
-    # Create new file
+    # Create new file with vector and lexical search enabled
     try:
         mv = create(file_path, enable_vec=True, enable_lex=True)
-        app.logger.info(f"Created new memory file: {file_path}")
+        logger.info(f"Created new memory file: {file_path}")
         return mv
     except Exception as e:
-        app.logger.error(f"Failed to create memory file {file_path}: {e}")
+        logger.error(f"Failed to create memory file {file_path}: {e}")
         raise
 
 @app.route('/')
@@ -207,10 +209,31 @@ def chat():
         # Get stats before search
         stats_before = mv.stats()
         app.logger.info(f"Memory stats before search: {stats_before}")
+        app.logger.info(f"Has vector index: {stats_before.get('has_vec_index', False)}")
+        app.logger.info(f"Has lexical index: {stats_before.get('has_lex_index', False)}")
         
-        # Search for relevant memories using hybrid search (BM25 + vector)
-        search_results = mv.find(message, k=3, mode="auto")
-        app.logger.info(f"Search results: {search_results}")
+        # Search for relevant memories - try auto first, fallback to lex if vector fails
+        search_results = None
+        search_mode = "auto"
+        try:
+            # Try hybrid search (BM25 + vector) if vector index exists
+            if stats_before.get('has_vec_index', False):
+                search_results = mv.find(message, k=3, mode="auto")
+            else:
+                # Fallback to lexical search only
+                app.logger.warning("Vector index not available, using lexical search only")
+                search_results = mv.find(message, k=3, mode="lex")
+                search_mode = "lex"
+        except Exception as e:
+            app.logger.error(f"Search failed with auto mode: {e}, trying lexical only")
+            try:
+                search_results = mv.find(message, k=3, mode="lex")
+                search_mode = "lex"
+            except Exception as e2:
+                app.logger.error(f"Lexical search also failed: {e2}")
+                search_results = {"hits": []}
+        
+        app.logger.info(f"Search results (mode={search_mode}): {search_results}")
         
         memories_str = ""
         memories_used = 0
@@ -290,7 +313,13 @@ Be conversational and helpful."""
             embedding_model="openai-small"
         )
         
-        mv.seal()  # Commit changes
+        # Commit changes - this is critical for persistence
+        try:
+            mv.seal()
+            logger.info("Successfully committed memory changes")
+        except Exception as e:
+            logger.error(f"Failed to seal memory file: {e}")
+            # Try to continue anyway
         
         stats_after = mv.stats()
         app.logger.info(f"Memory stats after storage: {stats_after}")
@@ -359,8 +388,35 @@ def search_memories(user_id):
         # Get user's memory instance
         mv = get_memory_instance(user_id)
         
-        # Search
-        search_results = mv.find(query, k=k, mode=mode)
+        # Get stats to check available indexes
+        stats = mv.stats()
+        has_vec = stats.get('has_vec_index', False)
+        has_lex = stats.get('has_lex_index', False)
+        
+        # Adjust mode based on available indexes
+        if mode == "auto" and not has_vec:
+            mode = "lex"
+            logger.warning(f"Vector index not available, falling back to lexical search")
+        elif mode == "sem" and not has_vec:
+            return jsonify({'error': 'Vector index is not enabled. Use mode=lex or enable vector index.'}), 400
+        
+        # Search with error handling
+        try:
+            search_results = mv.find(query, k=k, mode=mode)
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Search failed with mode {mode}: {error_msg}")
+            
+            # If vector search failed, try lexical
+            if mode != "lex" and has_lex:
+                logger.info("Retrying with lexical search")
+                try:
+                    search_results = mv.find(query, k=k, mode="lex")
+                    mode = "lex"
+                except Exception as e2:
+                    return jsonify({'error': f'Search failed: {str(e2)}'}), 500
+            else:
+                return jsonify({'error': f'Search failed: {error_msg}'}), 500
         
         # Format results
         results = []
