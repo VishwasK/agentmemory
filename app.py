@@ -303,42 +303,83 @@ Be conversational and helpful."""
         # Store conversation as memory in Memvid
         # Store both user message and assistant response separately for better search
         timestamp = int(time.time())
+        stored_count = 0
         
-        # Store user message
-        mv.put(
-            title=f"User Message - {timestamp}",
-            label="user_message",
-            text=message,
-            metadata={"user_id": user_id, "type": "user_message", "timestamp": timestamp},
-            enable_embedding=True,
-            embedding_model="openai-small"  # Uses OPENAI_API_KEY
-        )
+        # Store user message - try with embedding first, fallback without if it fails
+        try:
+            mv.put(
+                title=f"User Message - {timestamp}",
+                label="user_message",
+                text=message,
+                metadata={"user_id": user_id, "type": "user_message", "timestamp": timestamp},
+                enable_embedding=True,
+                embedding_model="openai-small"  # Uses OPENAI_API_KEY
+            )
+            stored_count += 1
+            logger.info(f"Stored user message: {message[:50]}...")
+        except Exception as e:
+            logger.error(f"Failed to store user message with embedding: {e}")
+            # Try without embedding
+            try:
+                mv.put(
+                    title=f"User Message - {timestamp}",
+                    label="user_message",
+                    text=message,
+                    metadata={"user_id": user_id, "type": "user_message", "timestamp": timestamp},
+                    enable_embedding=False
+                )
+                stored_count += 1
+                logger.info("Stored user message without embedding")
+            except Exception as e2:
+                logger.error(f"Failed to store user message: {e2}")
         
         # Store assistant response
-        mv.put(
-            title=f"Assistant Response - {timestamp}",
-            label="assistant_response",
-            text=assistant_response,
-            metadata={"user_id": user_id, "type": "assistant_response", "timestamp": timestamp},
-            enable_embedding=True,
-            embedding_model="openai-small"
-        )
+        try:
+            mv.put(
+                title=f"Assistant Response - {timestamp}",
+                label="assistant_response",
+                text=assistant_response,
+                metadata={"user_id": user_id, "type": "assistant_response", "timestamp": timestamp},
+                enable_embedding=True,
+                embedding_model="openai-small"
+            )
+            stored_count += 1
+            logger.info(f"Stored assistant response: {assistant_response[:50]}...")
+        except Exception as e:
+            logger.error(f"Failed to store assistant response with embedding: {e}")
+            # Try without embedding
+            try:
+                mv.put(
+                    title=f"Assistant Response - {timestamp}",
+                    label="assistant_response",
+                    text=assistant_response,
+                    metadata={"user_id": user_id, "type": "assistant_response", "timestamp": timestamp},
+                    enable_embedding=False
+                )
+                stored_count += 1
+                logger.info("Stored assistant response without embedding")
+            except Exception as e2:
+                logger.error(f"Failed to store assistant response: {e2}")
         
-        # Also store combined conversation
+        # Also store combined conversation (without embedding to avoid issues)
         conversation_text = f"User: {message}\nAssistant: {assistant_response}"
-        mv.put(
-            title=f"Conversation - {timestamp}",
-            label="conversation",
-            text=conversation_text,
-            metadata={"user_id": user_id, "type": "conversation", "timestamp": timestamp},
-            enable_embedding=True,
-            embedding_model="openai-small"
-        )
+        try:
+            mv.put(
+                title=f"Conversation - {timestamp}",
+                label="conversation",
+                text=conversation_text,
+                metadata={"user_id": user_id, "type": "conversation", "timestamp": timestamp},
+                enable_embedding=False  # Don't enable embedding for combined to avoid errors
+            )
+            stored_count += 1
+            logger.info("Stored combined conversation")
+        except Exception as e:
+            logger.error(f"Failed to store combined conversation: {e}")
         
         # Commit changes - this is critical for persistence
         try:
             mv.seal()
-            logger.info("Successfully committed memory changes")
+            logger.info(f"Successfully committed {stored_count} memory entries")
         except Exception as e:
             logger.error(f"Failed to seal memory file: {e}")
             # Try to continue anyway
@@ -462,6 +503,52 @@ def search_memories(user_id):
     except Exception as e:
         app.logger.error(f"Error searching memories: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+@app.route('/test-storage/<user_id>', methods=['POST'])
+def test_storage(user_id):
+    """Test endpoint to verify storage is working"""
+    try:
+        data = request.json
+        test_text = data.get('text', 'Test message')
+        
+        mv = get_memory_instance(user_id)
+        
+        # Try storing
+        timestamp = int(time.time())
+        mv.put(
+            title=f"Test Entry - {timestamp}",
+            label="test",
+            text=test_text,
+            metadata={"test": True, "timestamp": timestamp},
+            enable_embedding=False  # Skip embedding for test
+        )
+        mv.seal()
+        
+        # Try retrieving
+        stats = mv.stats()
+        timeline = mv.timeline(limit=5)
+        
+        # Try searching
+        search_results = mv.find(test_text[:10], k=3, mode="lex")
+        
+        return jsonify({
+            'success': True,
+            'stored_text': test_text,
+            'stats': stats,
+            'timeline_count': len(timeline),
+            'timeline_preview': [
+                {
+                    'title': e.get('title', ''),
+                    'text': e.get('text', '')[:100] if e.get('text') else '',
+                    'label': e.get('label', '')
+                }
+                for e in timeline[:3]
+            ],
+            'search_results': len(search_results.get('hits', []))
+        })
+    except Exception as e:
+        logger.error(f"Test storage failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/debug/<user_id>', methods=['GET'])
 def debug_memory(user_id):
