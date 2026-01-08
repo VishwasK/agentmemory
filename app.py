@@ -290,17 +290,25 @@ def chat():
                 if not snippet:
                     continue
                 
-                snippet_lower = snippet.lower()
+                snippet_lower = snippet.lower().strip()
                 
                 # Skip if snippet is too similar to the query (likely the question itself)
-                # Check if snippet contains the full query as a substring
+                # Check if snippet starts with or is exactly the query
+                snippet_first_line = snippet_lower.split('\n')[0].strip()  # Get first line only
+                
+                # Skip if first line is exactly the query (allowing minor punctuation differences)
+                if snippet_first_line == message_lower or snippet_first_line.replace('?', '').replace('!', '').strip() == message_lower:
+                    app.logger.info(f"Skipping result that matches query exactly: {snippet[:50]}...")
+                    continue
+                
+                # Skip if snippet contains the full query as a substring and is roughly the same length
                 if message_lower in snippet_lower and len(snippet_lower) < len(message_lower) * 1.5:
                     app.logger.info(f"Skipping result too similar to query: {snippet[:50]}...")
                     continue
                 
-                # Skip if snippet is exactly the query (with minor variations)
+                # Skip if snippet words are a subset of query words (query is more specific)
                 snippet_words = set(snippet_lower.split())
-                if len(snippet_words) <= len(message_words) + 2 and snippet_words.issubset(message_words):
+                if len(snippet_words) <= len(message_words) + 1 and snippet_words.issubset(message_words):
                     app.logger.info(f"Skipping result that matches query exactly: {snippet[:50]}...")
                     continue
                 
