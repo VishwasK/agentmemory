@@ -137,15 +137,20 @@ You can upload PDF files as reference documents that will be automatically index
 
 1. Click the **"📄 Upload PDF"** button in the header
 2. Select a PDF file from your computer
-3. The PDF will be automatically:
+3. **Choose embedding option**: 
+   - ✅ **Use embeddings** (checked by default): Enables semantic/vector search - requires OpenAI API key and uses LLM calls for embedding generation
+   - ❌ **Don't use embeddings**: Uses lexical (BM25) search only - faster, no LLM costs, but less semantic understanding
+4. The PDF will be automatically:
    - Extracted page by page
    - Chunked (each page stored as a separate memory frame)
-   - Indexed for both lexical and semantic search
+   - Indexed for lexical search (always) and semantic search (if embeddings enabled)
    - Stored in your user's `.mv2` memory file
 
-4. Once uploaded, you can ask questions about the PDF content in your conversations, and the AI will search through the PDF content along with your conversation history.
+5. Once uploaded, you can ask questions about the PDF content in your conversations, and the AI will search through the PDF content along with your conversation history.
 
-**Note**: Memvid doesn't automatically chunk PDFs - we extract text from each page and store them as separate frames. This allows for precise page-level retrieval and search.
+**Note**: 
+- Memvid doesn't automatically chunk PDFs - we extract text from each page and store them as separate frames. This allows for precise page-level retrieval and search.
+- **Embeddings vs Lexical**: Embeddings enable semantic search (finds conceptually similar content), while lexical search finds exact keyword matches. You can disable embeddings to save on LLM API costs if lexical search is sufficient for your use case.
 
 ## API Endpoints
 
@@ -158,8 +163,11 @@ You can upload PDF files as reference documents that will be automatically index
   }
   ```
 - `POST /upload` - Upload PDF files as knowledge references
-  - Form data: `file` (PDF file), `user_id` (optional, defaults to "default_user")
-  - Returns: Upload status, pages processed, chunks stored
+  - Form data: 
+    - `file` (PDF file, required)
+    - `user_id` (optional, defaults to "default_user")
+    - `enable_embeddings` (optional, "true" or "false", defaults to global ENABLE_EMBEDDINGS setting)
+  - Returns: Upload status, pages processed, chunks stored, embeddings_used flag
 - `GET /memories/<user_id>` - Get all memories for a user
 - `GET /health` - Health check endpoint
 

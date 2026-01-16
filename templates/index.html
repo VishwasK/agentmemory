@@ -209,8 +209,14 @@
             <input type="text" id="userIdInput" value="demo_user" placeholder="Enter user ID">
             <button onclick="showDebugInfo()" style="margin-left: 10px; padding: 6px 12px; background: #667eea; color: white; border: none; border-radius: 15px; cursor: pointer; font-size: 12px;">🔍 View Memories</button>
             <button onclick="searchMemories()" style="margin-left: 5px; padding: 6px 12px; background: #764ba2; color: white; border: none; border-radius: 15px; cursor: pointer; font-size: 12px;">🔎 Search</button>
-            <label for="pdfUpload" style="margin-left: 10px; padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 15px; cursor: pointer; font-size: 12px; display: inline-block;">📄 Upload PDF</label>
-            <input type="file" id="pdfUpload" accept=".pdf" style="display: none;" onchange="handlePdfUpload(event)">
+            <div style="margin-left: 10px; display: inline-flex; align-items: center; gap: 5px;">
+                <label for="pdfUpload" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 15px; cursor: pointer; font-size: 12px; display: inline-block;">📄 Upload PDF</label>
+                <input type="file" id="pdfUpload" accept=".pdf" style="display: none;" onchange="handlePdfUpload(event)">
+                <label style="font-size: 11px; color: #666; display: flex; align-items: center; gap: 3px; cursor: pointer;" title="Enable embeddings for semantic search (requires OpenAI API key, uses LLM calls)">
+                    <input type="checkbox" id="enableEmbeddings" checked style="cursor: pointer;">
+                    <span>Use embeddings</span>
+                </label>
+            </div>
         </div>
 
         <div class="chat-container" id="chatContainer">
@@ -451,9 +457,11 @@
             }
             
             const userId = userIdInput.value.trim() || 'default_user';
+            const enableEmbeddings = document.getElementById('enableEmbeddings').checked;
             const formData = new FormData();
             formData.append('file', file);
             formData.append('user_id', userId);
+            formData.append('enable_embeddings', enableEmbeddings.toString());
             
             // Show loading state
             const uploadLabel = document.querySelector('label[for="pdfUpload"]');

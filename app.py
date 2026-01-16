@@ -569,12 +569,27 @@ def upload_pdf():
         file = request.files['file']
         user_id = request.form.get('user_id', 'default_user')
         
+        # Get embedding preference from form (defaults to global ENABLE_EMBEDDINGS setting)
+        enable_embeddings_param = request.form.get('enable_embeddings', '')
+        if enable_embeddings_param.lower() == 'true':
+            use_embeddings = True and bool(openai_api_key)  # Only enable if API key available
+        elif enable_embeddings_param.lower() == 'false':
+            use_embeddings = False
+        else:
+            # Default to global setting
+            use_embeddings = ENABLE_EMBEDDINGS
+        
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
         
         # Check file extension
         if not file.filename.lower().endswith('.pdf'):
             return jsonify({'error': 'Only PDF files are supported'}), 400
+        
+        # Warn if embeddings requested but API key not available
+        if use_embeddings and not openai_api_key:
+            logger.warning("Embeddings requested but OPENAI_API_KEY not available - using lexical search only")
+            use_embeddings = False
         
         # Get user's memory instance
         mv = get_memory_instance(user_id)
@@ -615,32 +630,35 @@ def upload_pdf():
                             "total_pages": total_pages,
                             "timestamp": timestamp
                         },
-                        enable_embedding=ENABLE_EMBEDDINGS
+                        enable_embedding=use_embeddings
                     )
                     chunks_stored += 1
-                    logger.info(f"Stored PDF chunk (page {page_num}, frame_id={frame_id})")
+                    logger.info(f"Stored PDF chunk (page {page_num}, frame_id={frame_id}, embedding={use_embeddings})")
                 except Exception as e:
-                    logger.warning(f"Failed to store PDF page {page_num} with embedding={ENABLE_EMBEDDINGS}, retrying without: {e}")
-                    # Fallback: try without embeddings
-                    try:
-                        frame_id = mv.put(
-                            title=chunk_title,
-                            label="pdf_reference",
-                            text=text,
-                            metadata={
-                                "user_id": user_id,
-                                "type": "pdf_reference",
-                                "filename": filename,
-                                "page": page_num,
-                                "total_pages": total_pages,
-                                "timestamp": timestamp
-                            },
-                            enable_embedding=False
-                        )
-                        chunks_stored += 1
-                        logger.info(f"Stored PDF chunk (page {page_num}, frame_id={frame_id}, no embedding)")
-                    except Exception as e2:
-                        logger.error(f"Failed to store PDF page {page_num} even without embedding: {e2}", exc_info=True)
+                    if use_embeddings:
+                        logger.warning(f"Failed to store PDF page {page_num} with embedding={use_embeddings}, retrying without: {e}")
+                        # Fallback: try without embeddings
+                        try:
+                            frame_id = mv.put(
+                                title=chunk_title,
+                                label="pdf_reference",
+                                text=text,
+                                metadata={
+                                    "user_id": user_id,
+                                    "type": "pdf_reference",
+                                    "filename": filename,
+                                    "page": page_num,
+                                    "total_pages": total_pages,
+                                    "timestamp": timestamp
+                                },
+                                enable_embedding=False
+                            )
+                            chunks_stored += 1
+                            logger.info(f"Stored PDF chunk (page {page_num}, frame_id={frame_id}, no embedding)")
+                        except Exception as e2:
+                            logger.error(f"Failed to store PDF page {page_num} even without embedding: {e2}", exc_info=True)
+                    else:
+                        logger.error(f"Failed to store PDF page {page_num}: {e}", exc_info=True)
             
             except Exception as e:
                 logger.error(f"Error processing page {page_num}: {e}", exc_info=True)
@@ -664,7 +682,8 @@ def upload_pdf():
             'filename': filename,
             'pages_processed': total_pages,
             'chunks_stored': chunks_stored,
-            'message': f'Successfully uploaded and indexed {chunks_stored} pages from {filename}'
+            'embeddings_used': use_embeddings,
+            'message': f'Successfully uploaded and indexed {chunks_stored} pages from {filename} (embeddings: {"enabled" if use_embeddings else "disabled"})'
         })
     
     except PyPDF2.errors.PdfReadError as e:
