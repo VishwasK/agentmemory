@@ -209,6 +209,8 @@
             <input type="text" id="userIdInput" value="demo_user" placeholder="Enter user ID">
             <button onclick="showDebugInfo()" style="margin-left: 10px; padding: 6px 12px; background: #667eea; color: white; border: none; border-radius: 15px; cursor: pointer; font-size: 12px;">🔍 View Memories</button>
             <button onclick="searchMemories()" style="margin-left: 5px; padding: 6px 12px; background: #764ba2; color: white; border: none; border-radius: 15px; cursor: pointer; font-size: 12px;">🔎 Search</button>
+            <label for="pdfUpload" style="margin-left: 10px; padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 15px; cursor: pointer; font-size: 12px; display: inline-block;">📄 Upload PDF</label>
+            <input type="file" id="pdfUpload" accept=".pdf" style="display: none;" onchange="handlePdfUpload(event)">
         </div>
 
         <div class="chat-container" id="chatContainer">
@@ -435,6 +437,55 @@
                 }
             } catch (error) {
                 alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function handlePdfUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!file.name.toLowerCase().endsWith('.pdf')) {
+                alert('Please select a PDF file');
+                event.target.value = '';
+                return;
+            }
+            
+            const userId = userIdInput.value.trim() || 'default_user';
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', userId);
+            
+            // Show loading state
+            const uploadLabel = document.querySelector('label[for="pdfUpload"]');
+            const originalText = uploadLabel.textContent;
+            uploadLabel.textContent = '⏳ Uploading...';
+            uploadLabel.style.opacity = '0.6';
+            uploadLabel.style.cursor = 'not-allowed';
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addMessage(`📄 PDF uploaded successfully! ${data.message}`, false);
+                    console.log('PDF upload success:', data);
+                } else {
+                    addMessage(`❌ PDF upload failed: ${data.error}`, false);
+                    console.error('PDF upload error:', data);
+                }
+            } catch (error) {
+                addMessage(`❌ Error uploading PDF: ${error.message}`, false);
+                console.error('PDF upload error:', error);
+            } finally {
+                // Reset UI
+                uploadLabel.textContent = originalText;
+                uploadLabel.style.opacity = '1';
+                uploadLabel.style.cursor = 'pointer';
+                event.target.value = '';
             }
         }
     </script>

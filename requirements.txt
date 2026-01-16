@@ -2,5 +2,6 @@ Flask==3.0.0
 memvid-sdk>=2.0.0
 openai>=1.0.0
 gunicorn==21.2.0
+PyPDF2>=3.0.0
 
 

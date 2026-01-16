@@ -11,6 +11,7 @@ A demo application showcasing AI agent memory capabilities. This is a simple cha
 - 📦 **Single-File Architecture**: Everything stored in portable .mv2 files - no databases required
 - 🔄 **Hybrid Search**: Combines BM25 lexical matching with semantic vector search
 - ⏱️ **Time-Travel**: Built-in timeline index for temporal queries
+- 📄 **PDF Knowledge Base**: Upload PDF files as reference documents - automatically chunked and indexed for search
 
 ## Local Setup
 
@@ -130,6 +131,22 @@ The app stores one `.mv2` file per user in the configured storage path. Each fil
 
 **AI**: "You mentioned you love Python programming!"
 
+## PDF Knowledge Base
+
+You can upload PDF files as reference documents that will be automatically indexed and searchable:
+
+1. Click the **"📄 Upload PDF"** button in the header
+2. Select a PDF file from your computer
+3. The PDF will be automatically:
+   - Extracted page by page
+   - Chunked (each page stored as a separate memory frame)
+   - Indexed for both lexical and semantic search
+   - Stored in your user's `.mv2` memory file
+
+4. Once uploaded, you can ask questions about the PDF content in your conversations, and the AI will search through the PDF content along with your conversation history.
+
+**Note**: Memvid doesn't automatically chunk PDFs - we extract text from each page and store them as separate frames. This allows for precise page-level retrieval and search.
+
 ## API Endpoints
 
 - `GET /` - Main chat interface
@@ -140,6 +157,9 @@ The app stores one `.mv2` file per user in the configured storage path. Each fil
     "user_id": "demo_user"
   }
   ```
+- `POST /upload` - Upload PDF files as knowledge references
+  - Form data: `file` (PDF file), `user_id` (optional, defaults to "default_user")
+  - Returns: Upload status, pages processed, chunks stored
 - `GET /memories/<user_id>` - Get all memories for a user
 - `GET /health` - Health check endpoint
 
@@ -148,6 +168,7 @@ The app stores one `.mv2` file per user in the configured storage path. Each fil
 - **Flask**: Web framework
 - **MemvidAI v2**: Single-file memory layer for AI agents (replaces complex RAG pipelines)
 - **OpenAI**: LLM provider (for embeddings and chat completion)
+- **PyPDF2**: PDF text extraction library
 - **Gunicorn**: WSGI HTTP Server for Heroku
 
 ## Why MemvidAI v2?

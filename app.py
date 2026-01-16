@@ -10,6 +10,17 @@ logger = logging.getLogger(__name__)
 
 from flask import Flask, render_template, request, jsonify
 from openai import OpenAI
+from werkzeug.utils import secure_filename
+import io
+
+# Import PDF processing library
+try:
+    import PyPDF2
+    PDF_AVAILABLE = True
+    logger.info("PyPDF2 imported successfully")
+except ImportError as e:
+    logger.warning(f"PyPDF2 not available - PDF upload will be disabled: {e}")
+    PDF_AVAILABLE = False
 
 # Import memvid_sdk with error handling
 try:
@@ -542,6 +553,125 @@ Be conversational and helpful."""
     
     except Exception as e:
         app.logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/upload', methods=['POST'])
+def upload_pdf():
+    """Handle PDF file uploads and store content in Memvid"""
+    if not PDF_AVAILABLE:
+        return jsonify({'error': 'PDF processing not available - PyPDF2 not installed'}), 503
+    
+    try:
+        # Check if file is present
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        user_id = request.form.get('user_id', 'default_user')
+        
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Check file extension
+        if not file.filename.lower().endswith('.pdf'):
+            return jsonify({'error': 'Only PDF files are supported'}), 400
+        
+        # Get user's memory instance
+        mv = get_memory_instance(user_id)
+        
+        # Read PDF file
+        pdf_bytes = file.read()
+        pdf_file = io.BytesIO(pdf_bytes)
+        
+        # Extract text from PDF
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        total_pages = len(pdf_reader.pages)
+        
+        chunks_stored = 0
+        timestamp = int(time.time())
+        filename = secure_filename(file.filename)
+        
+        # Process each page as a chunk
+        for page_num, page in enumerate(pdf_reader.pages, start=1):
+            try:
+                text = page.extract_text()
+                
+                if not text or not text.strip():
+                    logger.warning(f"Page {page_num} has no extractable text")
+                    continue
+                
+                # Store each page as a separate frame
+                chunk_title = f"PDF: {filename} - Page {page_num}"
+                try:
+                    frame_id = mv.put(
+                        title=chunk_title,
+                        label="pdf_reference",
+                        text=text,
+                        metadata={
+                            "user_id": user_id,
+                            "type": "pdf_reference",
+                            "filename": filename,
+                            "page": page_num,
+                            "total_pages": total_pages,
+                            "timestamp": timestamp
+                        },
+                        enable_embedding=ENABLE_EMBEDDINGS
+                    )
+                    chunks_stored += 1
+                    logger.info(f"Stored PDF chunk (page {page_num}, frame_id={frame_id})")
+                except Exception as e:
+                    logger.warning(f"Failed to store PDF page {page_num} with embedding={ENABLE_EMBEDDINGS}, retrying without: {e}")
+                    # Fallback: try without embeddings
+                    try:
+                        frame_id = mv.put(
+                            title=chunk_title,
+                            label="pdf_reference",
+                            text=text,
+                            metadata={
+                                "user_id": user_id,
+                                "type": "pdf_reference",
+                                "filename": filename,
+                                "page": page_num,
+                                "total_pages": total_pages,
+                                "timestamp": timestamp
+                            },
+                            enable_embedding=False
+                        )
+                        chunks_stored += 1
+                        logger.info(f"Stored PDF chunk (page {page_num}, frame_id={frame_id}, no embedding)")
+                    except Exception as e2:
+                        logger.error(f"Failed to store PDF page {page_num} even without embedding: {e2}", exc_info=True)
+            
+            except Exception as e:
+                logger.error(f"Error processing page {page_num}: {e}", exc_info=True)
+                continue
+        
+        # Commit changes
+        try:
+            mv.seal()
+            logger.info(f"Successfully committed {chunks_stored} PDF chunks")
+        except Exception as e:
+            logger.error(f"Failed to seal memory file after PDF upload: {e}", exc_info=True)
+        
+        if chunks_stored == 0:
+            return jsonify({
+                'error': 'No text could be extracted from the PDF',
+                'pages_processed': total_pages
+            }), 400
+        
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'pages_processed': total_pages,
+            'chunks_stored': chunks_stored,
+            'message': f'Successfully uploaded and indexed {chunks_stored} pages from {filename}'
+        })
+    
+    except PyPDF2.errors.PdfReadError as e:
+        logger.error(f"PDF read error: {e}", exc_info=True)
+        return jsonify({'error': f'Invalid PDF file: {str(e)}'}), 400
+    except Exception as e:
+        logger.error(f"Error in PDF upload endpoint: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/memories/<user_id>', methods=['GET'])
