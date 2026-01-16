@@ -476,17 +476,29 @@
                     body: formData
                 });
                 
-                const data = await response.json();
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                let data;
+                
+                if (contentType && contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    // Response is not JSON (likely HTML error page)
+                    const text = await response.text();
+                    console.error('Non-JSON response:', text.substring(0, 200));
+                    throw new Error(`Server returned non-JSON response (status: ${response.status}). Check server logs.`);
+                }
                 
                 if (response.ok) {
                     addMessage(`📄 PDF uploaded successfully! ${data.message}`, false);
                     console.log('PDF upload success:', data);
                 } else {
-                    addMessage(`❌ PDF upload failed: ${data.error}`, false);
+                    addMessage(`❌ PDF upload failed: ${data.error || 'Unknown error'}`, false);
                     console.error('PDF upload error:', data);
                 }
             } catch (error) {
-                addMessage(`❌ Error uploading PDF: ${error.message}`, false);
+                const errorMsg = error.message || 'Unknown error occurred';
+                addMessage(`❌ Error uploading PDF: ${errorMsg}`, false);
                 console.error('PDF upload error:', error);
             } finally {
                 // Reset UI

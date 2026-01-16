@@ -16,11 +16,21 @@ import io
 # Import PDF processing library
 try:
     import PyPDF2
+    # Try to import PdfReadError - it might be in different locations in different versions
+    try:
+        from PyPDF2.errors import PdfReadError
+    except ImportError:
+        # Fallback for older PyPDF2 versions
+        try:
+            PdfReadError = PyPDF2.utils.PdfReadError
+        except AttributeError:
+            PdfReadError = Exception
     PDF_AVAILABLE = True
     logger.info("PyPDF2 imported successfully")
 except ImportError as e:
     logger.warning(f"PyPDF2 not available - PDF upload will be disabled: {e}")
     PDF_AVAILABLE = False
+    PdfReadError = Exception
 
 # Import memvid_sdk with error handling
 try:
@@ -68,6 +78,17 @@ elif ENABLE_EMBEDDINGS:
     logger.info("Embeddings enabled - vector search will be available")
 else:
     logger.info("Embeddings disabled - using lexical search only")
+
+@app.errorhandler(500)
+def handle_500_error(e):
+    """Ensure all errors return JSON instead of HTML"""
+    logger.error(f"Internal server error: {e}", exc_info=True)
+    return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+@app.errorhandler(404)
+def handle_404_error(e):
+    """Ensure 404 errors return JSON"""
+    return jsonify({'error': 'Endpoint not found'}), 404
 
 def get_memory_instance(user_id):
     """Initialize Memvid memory file for a specific user"""
@@ -558,10 +579,9 @@ Be conversational and helpful."""
 @app.route('/upload', methods=['POST'])
 def upload_pdf():
     """Handle PDF file uploads and store content in Memvid"""
-    if not PDF_AVAILABLE:
-        return jsonify({'error': 'PDF processing not available - PyPDF2 not installed'}), 503
-    
     try:
+        if not PDF_AVAILABLE:
+            return jsonify({'error': 'PDF processing not available - PyPDF2 not installed'}), 503
         # Check if file is present
         if 'file' not in request.files:
             return jsonify({'error': 'No file provided'}), 400
@@ -686,12 +706,15 @@ def upload_pdf():
             'message': f'Successfully uploaded and indexed {chunks_stored} pages from {filename} (embeddings: {"enabled" if use_embeddings else "disabled"})'
         })
     
-    except PyPDF2.errors.PdfReadError as e:
-        logger.error(f"PDF read error: {e}", exc_info=True)
-        return jsonify({'error': f'Invalid PDF file: {str(e)}'}), 400
     except Exception as e:
-        logger.error(f"Error in PDF upload endpoint: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        # Check if it's a PDF read error
+        error_type = type(e).__name__
+        if 'PdfReadError' in error_type or 'PDF' in str(type(e)):
+            logger.error(f"PDF read error: {e}", exc_info=True)
+            return jsonify({'error': f'Invalid PDF file: {str(e)}'}), 400
+        else:
+            logger.error(f"Error in PDF upload endpoint: {str(e)}", exc_info=True, stack_info=True)
+            return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
 @app.route('/memories/<user_id>', methods=['GET'])
 def get_memories(user_id):
